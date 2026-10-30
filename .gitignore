@@ -1,0 +1,12 @@
+# local tooling / session state
+.claude/
+.remember/
+
+# python
+__pycache__/
+*.py[cod]
+
+# os
+.DS_Store
+Thumbs.db
+desktop.ini
