@@ -1,16 +1,16 @@
 # Motherland Group — website redesign
 
-Static site. No build step needed to view it; `site/` is the deliverable and can be
-uploaded to any host as-is.
+Static site. No build step, no dependencies. The pages sit at the repo root so
+Vercel, GitHub Pages and Netlify all serve it with zero configuration.
 
 ## Run it locally
 
 ```bash
-python -m http.server 4173 --directory site
+python -m http.server 4173
 ```
 
-Then open http://localhost:4173. (Open `site/index.html` directly and the JavaScript
-modules will be blocked by the browser's file:// rules — use the server.)
+Then open http://localhost:4173. (Opening `index.html` straight off disk won't work —
+the browser blocks ES modules on `file://`. Use the server.)
 
 ## Pages
 
@@ -39,8 +39,18 @@ Content lives in plain Python lists near the top of `build.py` — `BASIC`, `FUN
 `T_*` testimonial lists. The site chrome (head, nav, footer) is defined once in
 `head()`, `topbar()` and `FOOT`, so a nav change reaches every page.
 
-To hand the client plain HTML with no generator, just give them `site/` — the
-generated files are self-contained.
+To hand the client plain HTML with no generator, give them everything except
+`build.py` — the generated pages are self-contained.
+
+## Deploying
+
+Any static host works as-is, because every path in the HTML is relative.
+
+- **Vercel** — import the repo, no settings to change.
+- **GitHub Pages** — Settings → Pages → Source: *Deploy from a branch*, `main` / `root`.
+  `.nojekyll` is present so Pages serves the files untouched.
+
+`.vercelignore` keeps `build.py` and `README.md` out of the deployed bundle.
 
 ## Design
 

@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Generates the Motherland Group site into ./site
+Generates the Motherland Group site into the repo root.
+Pages live at the root so static hosts (Vercel, GitHub Pages, Netlify)
+serve them with no configuration.
 One source of truth for the chrome; each page supplies only its body.
 Run:  python build.py
 """
 import os, io
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'site')
+OUT = os.path.dirname(os.path.abspath(__file__))
 
 NAV = [
     ('index.html',               'Home'),
