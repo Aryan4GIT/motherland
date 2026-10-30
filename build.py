@@ -177,8 +177,24 @@ def page(fname, title, desc, body, keywords=''):
 
 # ---------------------------------------------------------------- partials
 
+# The banners range from a near-white flat-lay to a dim factory floor
+# (measured mean luminance in brackets). On the light ground they all have
+# to carry the same weight under the veil, so each is pulled toward ~112.
+BANNER_DIM = {
+    'banner/alter-01.jpg':     .53,   # [208] threads on white
+    'motherland-01.jpg':       .58,   # [189] drier line, bright
+    'banner/md-banner-01.jpg': .60,   # [184] studio shot on white
+    'team.jpg':                .80,   # [140]
+    'about-mdl.jpg':          1.08,   # [101]
+    'denim-repair-01.jpg':    1.10,   # [94]
+    'banner/ms-01.jpg':       1.60,   # [66]  dark store interior
+}
+
+
 def phero(img, crumb, h1, lede, pos='center', dim=''):
-    """Compact banner for inner pages. `dim` overrides the grade for bright sources."""
+    """Compact banner for inner pages. `dim` overrides the normalised grade."""
+    if not dim and img in BANNER_DIM:
+        dim = 'saturate(.7) contrast(1.06) brightness(%s)' % BANNER_DIM[img]
     extra = (';filter:' + dim) if dim else ''
     return f'''
 <section class="phero">
@@ -922,8 +938,7 @@ def build():
     # ------------------------------------------------------ TESTIMONIALS
     tst = phero('banner/alter-01.jpg', 'Testimonials',
                 'What they say<br>when we are<br>not in the room',
-                'Design heads, sourcing teams, shoppers and people who just wanted their jeans to fit again.',
-                'center', 'saturate(.45) brightness(.3) contrast(1.1)') + f'''
+                'Design heads, sourcing teams, shoppers and people who just wanted their jeans to fit again.') + f'''
 <section class="band">
   <div class="shell">''' + sec_head(
         'MOTHERLAND GARMENTS', 'Exporters and<br>design teams',

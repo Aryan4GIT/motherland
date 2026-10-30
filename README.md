@@ -55,8 +55,15 @@ Any static host works as-is, because every path in the HTML is relative.
 ## Design
 
 Built on indigo, because the craft here is controlled fading of indigo — stone,
-acid and enzyme washes are all ways of taking the dye down. The house crimson
-(`#82073A → #DA0133`) is lifted from the original site's own CSS.
+acid and enzyme washes are all ways of taking the dye down. The palette is the
+bleached end of that wash: a washed-cotton ground (`#F1F4F9`) with indigo as the
+ink (`#121833` text, `#2E3F9E` accent). The house crimson (`#82073A → #DA0133`)
+is lifted from the original site's own CSS.
+
+Text that sits over a photograph keeps a dark scrim and light type — those need
+one regardless of the page around them, and the contrast gives the layout depth.
+Banner photographs range from a near-white flat-lay to a dim factory floor, so
+`BANNER_DIM` in `build.py` normalises each toward the same perceived weight.
 
 - Display type: **Archivo** at expanded width (`wdth` 118–125)
 - Body type: **Sora**

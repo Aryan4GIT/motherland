@@ -79,6 +79,14 @@ function splitHeads() {
 
   if (REDUCED) return;
 
+  // IntersectionObserver callbacks ride on the rendering steps, which a
+  // tab that is never painted does not run — so the pre-hidden words
+  // would stay hidden forever. Un-hide everything after a beat; the
+  // observer still animates from an explicit from-value when it fires.
+  setTimeout(() => $$('.sp-w').forEach(w => {
+    if (w.style.opacity === '0') w.removeAttribute('style');
+  }), 2500);
+
   const io = new IntersectionObserver(entries => {
     entries.forEach(e => {
       if (!e.isIntersecting) return;
@@ -86,6 +94,9 @@ function splitHeads() {
       // drop the inline transforms afterwards so the words stop
       // holding a composited layer each
       const settle = () => words.forEach(w => w.removeAttribute('style'));
+      // same safety net as the hero: a heading must never stay hidden
+      // just because the tab was in the background when it scrolled in
+      setTimeout(settle, 1400 + words.length * 48);
       if (anime) {
         anime({
           targets: words, translateY: ['105%', '0%'], rotate: [3, 0], opacity: [0, 1],
@@ -96,7 +107,6 @@ function splitHeads() {
           w.style.transition = `transform .85s cubic-bezier(.2,.9,.25,1) ${i * 48}ms, opacity .6s ease ${i * 48}ms`;
           w.style.transform = 'none'; w.style.opacity = '1';
         });
-        setTimeout(settle, 1000 + words.length * 48);
       }
       io.unobserve(e.target);
     });
@@ -204,12 +214,19 @@ function heroIn() {
   parts.forEach(el => { el.style.opacity = '0'; });
   cards.forEach(el => { el.style.opacity = '0'; });
 
-  // once the entrance is done, drop the leftover transforms so the
-  // hero stops holding a composited layer per element
-  const settle = () => [...parts, ...cards].forEach(el => {
-    el.style.transform = '';
-    el.style.opacity = '1';
-  });
+  // Once the entrance is done, drop the leftover transforms so the hero
+  // stops holding a composited layer per element.
+  // Also the safety net: rAF never fires in a background tab, so the
+  // timeline can sit at frame zero with the hero hidden. Nothing may
+  // stay invisible because an animation did not get to run.
+  const settle = () => {
+    [...parts, ...cards].forEach(el => {
+      el.style.transform = '';
+      el.style.opacity = '1';
+    });
+    counters();
+  };
+  setTimeout(settle, 3200);
 
   anime.timeline({ easing: 'easeOutExpo', duration: 1000, complete: settle })
     .add({ targets: '#heroTag', opacity: [0, 1], translateY: [18, 0], duration: 680 })
@@ -251,13 +268,17 @@ function counters() {
     const to = +el.dataset.to;
     const fmt = el.dataset.fmt === 'in' ? inGroup
       : v => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    if (REDUCED || !anime) { el.textContent = fmt(to) + '+'; return; }
+    const final = () => { el.textContent = fmt(to) + '+'; };
+    if (REDUCED || !anime) { final(); return; }
     const o = { v: 0 };
     anime({
       targets: o, v: to, duration: 2200, easing: 'easeOutExpo',
       update: () => { el.textContent = fmt(Math.round(o.v)); },
-      complete: () => { el.textContent = fmt(to) + '+'; }
+      complete: final
     });
+    // the count-up rides on rAF, which a background tab never fires —
+    // land on the real number either way
+    setTimeout(final, 2600);
   });
 }
 
