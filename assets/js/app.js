@@ -1,641 +1,566 @@
 /* ============================================================
-   MOTHERLAND GROUP — motion layer
-   lenis      → smooth scrolling
-   motion.dev → reveals, springs, magnetic buttons
-   anime.js   → the load sequence, counters, the wash wipe
-   vanilla    → parallax, marquees, tilt, cursor, demo, tabs
-   Every library loads dynamically, so a CDN failure degrades
-   to a visible, static, fully readable site.
+   MOTHERLAND GROUP
+   Interactions and live visuals. No libraries and no network calls,
+   so nothing here can fail to load. If this file never runs, every
+   word on the site is still visible and only the canvases stay blank.
+
+   Everything that moves forever goes through live(): it draws only
+   while its element is on screen, stops when motion is paused, and
+   gives up on a device that cannot keep the frame rate.
    ============================================================ */
+(() => {
+  const $  = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const root = document.documentElement;
+  const CALM  = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const PHONE = matchMedia('(max-width:639px)').matches;
+  const MOUSE = matchMedia('(hover:hover) and (pointer:fine)').matches;
 
-const $  = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const FINE    = matchMedia('(hover:hover) and (pointer:fine)').matches;
-
-let motion = null, anime = null, Lenis = null, lenis = null;
-
-const load = () => Promise.all([
-  import('https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm')
-    .then(m => { motion = m; }).catch(() => {}),
-  import('https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.es.js')
-    .then(m => { anime = m.default || m; }).catch(() => {}),
-  import('https://cdn.jsdelivr.net/npm/lenis@1.1.14/+esm')
-    .then(m => { Lenis = m.default || m.Lenis; }).catch(() => {})
-]);
-
-/* ------------------------------------------------------------
-   Smooth scroll. Everything else reads window.scrollY, which
-   Lenis keeps in sync, so nothing downstream needs to know.
-   ------------------------------------------------------------ */
-function smooth() {
-  if (REDUCED || !Lenis) return;
-  lenis = new Lenis({ duration: 1.15, smoothWheel: true, lerp: 0.1 });
-  const raf = t => { lenis.raf(t); requestAnimationFrame(raf); };
-  requestAnimationFrame(raf);
-
-  $$('a[href^="#"]').forEach(a => {
-    const id = a.getAttribute('href');
-    if (id.length < 2) return;
-    a.addEventListener('click', e => {
-      const t = $(id);
-      if (!t) return;
-      e.preventDefault();
-      lenis.scrollTo(t, { offset: -92 });
-    });
+  /* ---------- the pause switch ---------- */
+  const loops = [];
+  let still = CALM || root.classList.contains('still');
+  const motionButtons = $$('[data-motion]');
+  const labelMotion = () => motionButtons.forEach(b => {
+    const text = still ? 'Play motion' : 'Pause motion';
+    if (b.dataset.motion === 'icon') b.setAttribute('aria-label', text);
+    else b.textContent = text;
   });
-
-  // Lenis owns the scroll position, so a #hash arriving from another
-  // page never lands. Take it there once the page has settled.
-  if (location.hash.length > 1) {
-    const t = $(location.hash);
-    if (t) setTimeout(() => lenis.scrollTo(t, { offset: -92, immediate: true }), 120);
-  }
-}
-
-/* ------------------------------------------------------------
-   Split headings into lines of words, so they can rise in
-   sequence from behind a mask. One device, used on every H2.
-   ------------------------------------------------------------ */
-function splitHeads() {
-  $$('[data-split]').forEach(h => {
-    if (h.dataset.done) return;
-    h.dataset.done = '1';
-
-    // <br> already tells us where the author wanted a line break
-    const lines = h.innerHTML.split(/<br\s*\/?>/i);
-    h.innerHTML = lines.map(line => {
-      const words = line.trim().split(/\s+/).filter(Boolean)
-        .map(w => `<span class="sp-w">${w}</span>`).join(' ');
-      return `<span class="sp-line">${words}</span>`;
-    }).join('');
-
-    if (REDUCED) return;
-    $$('.sp-w', h).forEach(w => {
-      w.style.transform = 'translateY(105%) rotate(3deg)';
-      w.style.opacity = '0';
-    });
-  });
-
-  if (REDUCED) return;
-
-  // IntersectionObserver callbacks ride on the rendering steps, which a
-  // tab that is never painted does not run — so the pre-hidden words
-  // would stay hidden forever. Un-hide everything after a beat; the
-  // observer still animates from an explicit from-value when it fires.
-  setTimeout(() => $$('.sp-w').forEach(w => {
-    if (w.style.opacity === '0') w.removeAttribute('style');
-  }), 2500);
-
-  const io = new IntersectionObserver(entries => {
-    entries.forEach(e => {
-      if (!e.isIntersecting) return;
-      const words = $$('.sp-w', e.target);
-      // drop the inline transforms afterwards so the words stop
-      // holding a composited layer each
-      const settle = () => words.forEach(w => w.removeAttribute('style'));
-      // same safety net as the hero: a heading must never stay hidden
-      // just because the tab was in the background when it scrolled in
-      setTimeout(settle, 1400 + words.length * 48);
-      if (anime) {
-        anime({
-          targets: words, translateY: ['105%', '0%'], rotate: [3, 0], opacity: [0, 1],
-          delay: anime.stagger(48), duration: 950, easing: 'easeOutExpo', complete: settle
-        });
-      } else {
-        words.forEach((w, i) => {
-          w.style.transition = `transform .85s cubic-bezier(.2,.9,.25,1) ${i * 48}ms, opacity .6s ease ${i * 48}ms`;
-          w.style.transform = 'none'; w.style.opacity = '1';
-        });
-      }
-      io.unobserve(e.target);
-    });
-  }, { threshold: .2, rootMargin: '0px 0px -8% 0px' });
-
-  $$('[data-split]').forEach(h => io.observe(h));
-}
-
-/* ------------------------------------------------------------
-   Reveals + the rules that draw themselves
-   ------------------------------------------------------------ */
-function reveals() {
-  const items = [...$$('.rv'), ...$$('.rule')];
-  if (REDUCED) { items.forEach(el => el.classList.add('seen')); return; }
-
-  const io = new IntersectionObserver(entries => {
-    entries.forEach(e => {
-      if (!e.isIntersecting) return;
-      const el = e.target;
-      if (el.classList.contains('rule')) { el.classList.add('seen'); io.unobserve(el); return; }
-      if (motion) {
-        motion.animate(el,
-          { opacity: [0, 1], transform: ['translateY(28px)', 'translateY(0px)'] },
-          { duration: .9, easing: [.2, .85, .25, 1] });
-      } else {
-        el.style.transition = 'opacity .8s ease, transform .8s cubic-bezier(.2,.85,.25,1)';
-      }
-      el.classList.add('seen');
-      io.unobserve(el);
-    });
-  }, { rootMargin: '0px 0px -10% 0px', threshold: .1 });
-
-  items.forEach(el => io.observe(el));
-}
-
-/* Grids arrive as a group, not one card at a time. */
-function staggerGroups() {
-  if (REDUCED) return;
-  const sel = ['.divs', '.certs', '.grid-3', '.alt-grid', '.stores',
-               '.team-grid', '.rail-track', '.counters', '.showcase', '.team-lead', '.pillars'];
-
-  const io = new IntersectionObserver(entries => {
-    entries.forEach(e => {
-      if (!e.isIntersecting) return;
-      [...e.target.children].forEach((el, i) => {
-        el.style.opacity = '0';
-        el.style.transform = 'translateY(24px) scale(.985)';
-        el.style.transition =
-          `opacity .75s ease ${i * 55}ms, transform .75s cubic-bezier(.2,.85,.25,1) ${i * 55}ms`;
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          el.style.opacity = '1';
-          el.style.transform = '';
-        }));
-      });
-      io.unobserve(e.target);
-    });
-  }, { threshold: .06, rootMargin: '0px 0px -6% 0px' });
-
-  sel.forEach(s => $$(s).forEach(g => io.observe(g)));
-}
-
-/* ------------------------------------------------------------
-   Boot + hero: the one orchestrated page-load moment.
-   The wordmark is washed down by an indigo→bleach gradient,
-   which is exactly what this company does to a garment.
-   ------------------------------------------------------------ */
-function bootAndHero() {
-  const boot = $('#boot'), bar = $('#boot .boot-bar i'), mark = $('#boot .boot-mark');
-
-  const finish = () => {
-    if (!boot || boot.dataset.done) return;
-    boot.dataset.done = '1';
-    boot.style.transition = 'opacity .55s ease, transform .9s cubic-bezier(.7,0,.3,1)';
-    boot.style.transform = 'translateY(-101%)';
-    boot.style.opacity = '0';
-    setTimeout(() => boot.remove(), 950);
-    heroIn();
-  };
-
-  if (REDUCED || !anime || !boot) {
-    if (mark) mark.style.backgroundPosition = '100% 50%';
-    setTimeout(finish, REDUCED ? 60 : 600);
-    return;
-  }
-
-  anime.timeline({ easing: 'easeOutExpo' })
-    .add({ targets: mark, opacity: [0, 1], scale: [.94, 1], duration: 620 })
-    .add({ targets: mark, backgroundPosition: ['0% 50%', '100% 50%'], duration: 1050, easing: 'easeInOutQuart' }, '-=400')
-    .add({ targets: bar, width: ['0%', '100%'], duration: 950, easing: 'easeInOutQuart' }, '-=1000')
-    .add({ targets: mark, opacity: 0, translateY: -14, duration: 400, easing: 'easeInQuad', complete: finish }, '-=110');
-
-  setTimeout(finish, 3400); // failsafe
-}
-
-function heroIn() {
-  const hero = $('.hero');
-  if (!hero) { pheroIn(); return; }
-
-  const parts = ['#heroTag', '#h1a', '#h1b', '#h1c', '#heroLine', '#heroLede', '#heroActs', '#scrollHint']
-    .map(s => $(s)).filter(Boolean);
-
-  if (REDUCED || !anime) { counters(); return; }
-
-  const cards = $$('#counters .ctr');
-  parts.forEach(el => { el.style.opacity = '0'; });
-  cards.forEach(el => { el.style.opacity = '0'; });
-
-  // Once the entrance is done, drop the leftover transforms so the hero
-  // stops holding a composited layer per element.
-  // Also the safety net: rAF never fires in a background tab, so the
-  // timeline can sit at frame zero with the hero hidden. Nothing may
-  // stay invisible because an animation did not get to run.
-  const settle = () => {
-    [...parts, ...cards].forEach(el => {
-      el.style.transform = '';
-      el.style.opacity = '1';
-    });
-    counters();
-  };
-  setTimeout(settle, 3200);
-
-  anime.timeline({ easing: 'easeOutExpo', duration: 1000, complete: settle })
-    .add({ targets: '#heroTag', opacity: [0, 1], translateY: [18, 0], duration: 680 })
-    .add({ targets: ['#h1a', '#h1b', '#h1c'], opacity: [0, 1], translateY: [56, 0], rotate: [1.5, 0], delay: anime.stagger(110) }, '-=400')
-    .add({ targets: '#h1b', backgroundPosition: ['0% 50%', '62% 50%'], duration: 1500, easing: 'easeInOutQuart' }, '-=900')
-    .add({ targets: '#heroLine', opacity: [0, 1], scaleX: [0, 1], duration: 760 }, '-=1150')
-    .add({ targets: '#heroLede', opacity: [0, 1], translateY: [22, 0], duration: 760 }, '-=620')
-    .add({ targets: '#heroActs', opacity: [0, 1], translateY: [22, 0], duration: 700 }, '-=560')
-    .add({ targets: '#counters .ctr', opacity: [0, 1], translateY: [34, 0], scale: [.95, 1],
-           delay: anime.stagger(90), duration: 820, begin: counters }, '-=620')
-    .add({ targets: '#scrollHint', opacity: [0, 1], duration: 600 }, '-=400');
-
-  // the wash keeps breathing afterwards, very slowly
-  anime({ targets: '#h1b', backgroundPosition: ['62% 50%', '38% 50%'],
-          duration: 6500, direction: 'alternate', loop: true,
-          easing: 'easeInOutSine', delay: 2600 });
-}
-
-/* Inner pages get a quieter version of the same entrance. */
-function pheroIn() {
-  const p = $('.phero');
-  if (!p || REDUCED || !anime) return;
-  const bits = [$('.crumb', p), $('.lede', p)].filter(Boolean);
-  anime({ targets: bits, opacity: [0, 1], translateY: [20, 0],
-          delay: anime.stagger(120, { start: 140 }), duration: 900, easing: 'easeOutExpo' });
-}
-
-/* Indian digit grouping: 100000 → 1,00,000 */
-const inGroup = n => {
-  const s = String(n);
-  if (s.length <= 3) return s;
-  return s.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + s.slice(-3);
-};
-
-let counted = false;
-function counters() {
-  if (counted) return; counted = true;
-  $$('#counters .n').forEach(el => {
-    const to = +el.dataset.to;
-    const fmt = el.dataset.fmt === 'in' ? inGroup
-      : v => String(v).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    const final = () => { el.textContent = fmt(to) + '+'; };
-    if (REDUCED || !anime) { final(); return; }
-    const o = { v: 0 };
-    anime({
-      targets: o, v: to, duration: 2200, easing: 'easeOutExpo',
-      update: () => { el.textContent = fmt(Math.round(o.v)); },
-      complete: final
-    });
-    // the count-up rides on rAF, which a background tab never fires —
-    // land on the real number either way
-    setTimeout(final, 2600);
-  });
-}
-
-/* ------------------------------------------------------------
-   Parallax on both hero kinds
-   ------------------------------------------------------------ */
-function parallax() {
-  if (REDUCED) return;
-  const layers = [
-    [$('#heroBg'), $('.hero'), 96, .1],
-    [$('.phero-bg'), $('.phero'), 70, .08]
-  ].filter(([el, host]) => el && host);
-  const blobs = $$('.aura b');
-  if (!layers.length && !blobs.length) return;
-
-  let t = false;
-  const run = () => {
-    const y = window.scrollY;
-    layers.forEach(([el, host, dist, sc]) => {
-      const h = host.offsetHeight;
-      if (y > h + 240) return;
-      const p = Math.min(y / h, 1);
-      el.style.transform = `translate3d(0,${p * dist}px,0) scale(${1 + p * sc})`;
-    });
-    blobs.forEach((b, i) => {
-      const k = (i + 1) * .045 * (i % 2 ? -1 : 1);
-      b.style.transform = `translate3d(0,${y * k}px,0)`;
-    });
-    t = false;
-  };
-  addEventListener('scroll', () => { if (!t) { t = true; requestAnimationFrame(run); } }, { passive: true });
-  run();
-}
-
-/* ------------------------------------------------------------
-   Marquees — constant drift, nudged by scroll velocity
-   ------------------------------------------------------------ */
-function marquees() {
-  const rows = $$('.mq-row');
-  if (!rows.length || REDUCED) return;
-
-  const st = rows.map(r => ({ el: r, x: 0, base: +r.dataset.mq || -.4, w: 0 }));
-  const measure = () => st.forEach(s => { s.w = s.el.scrollWidth / 2; });
-  measure();
-  addEventListener('resize', measure);
-  addEventListener('load', measure);
-
-  let vel = 0, last = window.scrollY;
-  addEventListener('scroll', () => {
-    vel += (window.scrollY - last) * .035;
-    last = window.scrollY;
-  }, { passive: true });
-
-  (function tick() {
-    vel *= .92;
-    st.forEach(s => {
-      s.x += s.base + vel * Math.sign(s.base || 1);
-      if (s.w) {
-        if (s.x <= -s.w) s.x += s.w;
-        if (s.x > 0) s.x -= s.w;
-      }
-      s.el.style.transform = `translate3d(${s.x}px,0,0)`;
-    });
-    requestAnimationFrame(tick);
-  })();
-}
-
-/* ------------------------------------------------------------
-   Nav: stuck state, scroll progress, drawer
-   ------------------------------------------------------------ */
-function nav() {
-  const bar = $('#topbar'), up = $('#toTop'), prog = $('#prog');
-
-  const run = () => {
-    const y = window.scrollY;
-    if (bar) bar.classList.toggle('is-stuck', y > 40);
-    if (up) up.classList.toggle('on', y > 700);
-    if (prog) {
-      const max = document.documentElement.scrollHeight - innerHeight;
-      prog.style.transform = `scaleX(${max > 0 ? Math.min(y / max, 1) : 0})`;
-    }
-  };
-  addEventListener('scroll', run, { passive: true });
-  addEventListener('resize', run);
-  run();
-
-  const burger = $('#burger'), drawer = $('#drawer');
-  if (!burger || !drawer) return;
-  const toggle = on => {
-    burger.classList.toggle('on', on);
-    drawer.classList.toggle('on', on);
-    burger.setAttribute('aria-expanded', String(on));
-    if (lenis) on ? lenis.stop() : lenis.start();
-    document.body.style.overflow = on ? 'hidden' : '';
-  };
-  burger.addEventListener('click', () => toggle(!drawer.classList.contains('on')));
-  $$('#drawer a').forEach(a => a.addEventListener('click', () => toggle(false)));
-  addEventListener('keydown', e => { if (e.key === 'Escape') toggle(false); });
-}
-
-/* ------------------------------------------------------------
-   Wash tabs
-   ------------------------------------------------------------ */
-function tabs() {
-  const btns = $$('#washTabs .tab');
-  if (!btns.length) return;
-
-  btns.forEach(btn => btn.addEventListener('click', () => {
-    if (btn.classList.contains('on')) return;
-    btns.forEach(b => { b.classList.remove('on'); b.setAttribute('aria-selected', 'false'); });
-    btn.classList.add('on'); btn.setAttribute('aria-selected', 'true');
-
-    $$('.panel').forEach(p => { p.hidden = true; });
-    const panel = $('#' + btn.dataset.panel);
-    panel.hidden = false;
-    const cards = $$('.wash', panel);
-    if (REDUCED) return;
-
-    if (anime) {
-      anime({ targets: cards, opacity: [0, 1], translateY: [28, 0], scale: [.97, 1],
-              delay: anime.stagger(45), duration: 640, easing: 'easeOutExpo' });
-    } else {
-      cards.forEach((c, i) => {
-        c.style.opacity = '0'; c.style.transform = 'translateY(26px)';
-        c.style.transition = `opacity .5s ease ${i * 45}ms, transform .5s ease ${i * 45}ms`;
-        requestAnimationFrame(() => { c.style.opacity = '1'; c.style.transform = 'none'; });
-      });
-    }
+  motionButtons.forEach(b => b.addEventListener('click', () => {
+    still = !still;
+    root.classList.toggle('still', still);
+    try { localStorage.setItem('motion', still ? 'off' : 'on'); } catch (e) { /* private mode: it just won't be remembered */ }
+    labelMotion();
+    loops.forEach(l => l.sync());
   }));
-}
+  labelMotion();
 
-/* ------------------------------------------------------------
-   Cursor-tracked spotlight border + 3D tilt
-   ------------------------------------------------------------ */
-function pointerFX() {
-  if (REDUCED || !FINE) return;
+  function live(el, draw) {
+    const loop = { seen: false, raf: 0, slow: false, skip: false, avg: 16, frames: 0, prev: 0 };
+    const tick = now => {
+      loop.raf = requestAnimationFrame(tick);
+      if (PHONE && (loop.skip = !loop.skip)) return;    // 30fps is plenty on a phone
+      const dt = now - loop.prev;
+      loop.prev = now;
+      if (dt < 250) loop.avg += (dt - loop.avg) * .05;
+      if (++loop.frames > 90 && loop.avg > (PHONE ? 80 : 50)) { loop.slow = true; loop.sync(); return; }
+      draw(now / 1000);
+    };
+    loop.sync = () => {
+      const run = loop.seen && !still && !loop.slow;
+      if (run && !loop.raf) { loop.prev = performance.now(); loop.raf = requestAnimationFrame(tick); }
+      if (!run && loop.raf) { cancelAnimationFrame(loop.raf); loop.raf = 0; }
+    };
+    new IntersectionObserver(([e]) => { loop.seen = e.isIntersecting; loop.sync(); }, { rootMargin: '60px' }).observe(el);
+    loops.push(loop);
+    draw(performance.now() / 1000);   // always one frame, so a paused page still shows the visual
+    return loop;
+  }
 
-  $$('.spot').forEach(el => {
-    el.addEventListener('pointermove', e => {
-      const r = el.getBoundingClientRect();
-      el.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100) + '%');
-      el.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100) + '%');
+  /* ---------- menu: a modal <dialog> gives focus trapping and Esc for free ---------- */
+  const menu = $('#menu');
+  $$('[data-menu]').forEach(b => b.addEventListener('click', () => menu.showModal()));
+  $$('[data-menu-close], a', menu).forEach(el => el.addEventListener('click', () => menu.close()));
+
+  /* ---------- tabs ---------- */
+  $$('[role=tablist]').forEach(list => {
+    const tabs = $$('[role=tab]', list);
+    const select = (tab, focus) => tabs.forEach(t => {
+      const on = t === tab;
+      t.setAttribute('aria-selected', on);
+      t.tabIndex = on ? 0 : -1;
+      $('#' + t.getAttribute('aria-controls')).hidden = !on;
+      if (on && focus) t.focus();
     });
+    tabs.forEach((tab, i) => {
+      tab.addEventListener('click', () => select(tab));
+      tab.addEventListener('keydown', e => {
+        const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+        if (!step) return;
+        e.preventDefault();
+        select(tabs[(i + step + tabs.length) % tabs.length], true);
+      });
+    });
+    select(tabs[0]); // panels start visible in the markup, so they read fine without JS
   });
 
-  $$('.tilt').forEach(el => {
-    el.style.transition = 'transform .5s cubic-bezier(.2,.9,.25,1)';
-    el.addEventListener('pointermove', e => {
-      const r = el.getBoundingClientRect();
-      const px = (e.clientX - r.left) / r.width - .5;
-      const py = (e.clientY - r.top) / r.height - .5;
-      el.style.transition = 'transform .12s linear';
-      el.style.transform =
-        `perspective(900px) rotateY(${px * 9}deg) rotateX(${-py * 9}deg) translateZ(14px)`;
-    });
-    el.addEventListener('pointerleave', () => {
-      el.style.transition = 'transform .6s cubic-bezier(.2,.9,.25,1)';
-      el.style.transform = '';
-    });
+  /* ---------- lists: an accordion on phones, all open on anything wider ---------- */
+  const wide = matchMedia('(min-width:640px)');
+  const syncRows = () => $$('.row').forEach(d => {
+    d.open = wide.matches;
+    $('summary', d).tabIndex = wide.matches ? -1 : 0;
   });
-}
+  wide.addEventListener('change', syncRows);
+  syncRows();
 
-/* ------------------------------------------------------------
-   Custom cursor — a ring that reacts to what is under it
-   ------------------------------------------------------------ */
-function cursor() {
-  const ring = $('.cur'), dot = $('.cur-d');
-  if (!ring || !dot || !FINE || REDUCED) { ring?.remove(); dot?.remove(); return; }
+  /* ---------- hero numbers count up. The markup holds the real value,
+     so a frame that never runs leaves the right number on screen. ---------- */
+  if (!still) $$('[data-to]').forEach(el => {
+    const to = +el.dataset.to, final = el.textContent, t0 = performance.now();
+    const tick = now => {
+      const p = Math.min((now - t0 - 400) / 1500, 1);
+      if (p >= 1) { el.textContent = final; return; }
+      el.textContent = Math.round(to * (1 - Math.pow(2, -10 * Math.max(p, 0)))).toLocaleString('en-IN');
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
 
-  let x = innerWidth / 2, y = innerHeight / 2, rx = x, ry = y;
-  addEventListener('pointermove', e => {
-    x = e.clientX; y = e.clientY;
-    dot.style.transform = `translate(${x}px,${y}px)`;
+  /* ---------- plain arithmetic at the published rate, and the sentence says so ---------- */
+  const ticker = $('#ticker');
+  if (ticker) {
+    const n = $('b', ticker), word = $('[data-word]', ticker), t0 = performance.now();
+    const show = () => {
+      const v = Math.floor((performance.now() - t0) / 1000 * 100000 / 86400);
+      n.textContent = v.toLocaleString('en-IN');
+      word.textContent = v === 1 ? 'garment' : 'garments';
+    };
+    ticker.hidden = false;
+    show();
+    setInterval(show, 250);
+  }
 
-    const t = e.target.closest('a,button,.sc,.tab,.demo,.store,.alt,.mini,input,textarea,select');
-    ring.classList.toggle('hot', !!t && !t.matches('input,textarea,select'));
-    ring.classList.toggle('txt', !!t && t.matches('input,textarea,select'));
+  /* ---------- the hero has depth: figure and drum shift apart under the pointer ---------- */
+  const fig = $('.hero-fig');
+  if (fig && MOUSE && !CALM) $('.hero').addEventListener('pointermove', e => {
+    const r = fig.getBoundingClientRect();
+    const clamp = v => Math.max(-1, Math.min(1, v)).toFixed(3);
+    fig.style.setProperty('--px', clamp((e.clientX - r.left) / r.width - .5));
+    fig.style.setProperty('--py', clamp((e.clientY - r.top) / r.height - .5));
   }, { passive: true });
 
-  (function loop() {
-    rx += (x - rx) * .17;
-    ry += (y - ry) * .17;
-    ring.style.transform = `translate(${rx}px,${ry}px)`;
-    requestAnimationFrame(loop);
-  })();
-
-  addEventListener('pointerdown', () => { ring.style.scale = '.82'; });
-  addEventListener('pointerup',   () => { ring.style.scale = '1'; });
-}
-
-/* ------------------------------------------------------------
-   Magnetic buttons (motion.dev spring)
-   ------------------------------------------------------------ */
-function magnetic() {
-  if (REDUCED || !motion || !FINE) return;
-  $$('.btn--house, .fab a, .socials a, .demo-knob').forEach(el => {
-    el.addEventListener('pointermove', e => {
-      const r = el.getBoundingClientRect();
-      motion.animate(el, {
-        x: (e.clientX - (r.left + r.width / 2)) * .2,
-        y: (e.clientY - (r.top + r.height / 2)) * .28
-      }, { type: 'spring', stiffness: 320, damping: 22 });
-    });
-    el.addEventListener('pointerleave', () => {
-      motion.animate(el, { x: 0, y: 0 }, { type: 'spring', stiffness: 260, damping: 18 });
+  /* ---------- division panels take turns. Each one's progress bar is a CSS animation,
+     so when hover, the pause switch or scrolling away stops the bar, the turn-taking stops with it. ---------- */
+  const inView = el => new IntersectionObserver(([e]) => el.classList.toggle('in-view', e.isIntersecting), { threshold: .25 }).observe(el);
+  $$('.showcase').forEach(wrap => {
+    inView(wrap);
+    const panels = $$('.sc', wrap);
+    const open = p => panels.forEach(x => x.classList.toggle('is-open', x === p));
+    panels.forEach((p, i) => {
+      $('.sc-bar', p).addEventListener('animationend', () => open(panels[(i + 1) % panels.length]));
+      p.addEventListener('pointerenter', () => { if (MOUSE) open(p); });
+      p.addEventListener('focus', () => open(p));
     });
   });
-}
 
-/* ------------------------------------------------------------
-   Showcase panels
-   ------------------------------------------------------------ */
-function showcase() {
-  const wrap = $('#showcase');
-  if (!wrap) return;
-  const panels = $$('.sc', wrap);
-
-  const open = p => panels.forEach(x => x.classList.toggle('open', x === p));
-  panels.forEach(p => {
-    p.addEventListener('pointerenter', () => { if (FINE) open(p); });
-    p.addEventListener('click', e => {
-      if (e.target.closest('a')) return;
-      open(p);
+  /* ---------- the quote stage works the same way ---------- */
+  $$('.stage').forEach(stage => {
+    inView(stage);
+    const quotes = $$('.sq', stage), who = $$('.who', stage);
+    const show = n => {
+      quotes.forEach((q, i) => q.classList.toggle('is-on', i === n));
+      who.forEach((w, i) => { w.classList.toggle('is-on', i === n); w.setAttribute('aria-pressed', i === n); });
+    };
+    who.forEach((w, i) => {
+      w.addEventListener('click', () => show(i));
+      $('.who-bar', w).addEventListener('animationend', () => show((i + 1) % who.length));
     });
-    p.addEventListener('focus', () => open(p));
   });
-}
 
-/* ------------------------------------------------------------
-   The wash demo. Drag the handle and the indigo comes down —
-   the whole business in one gesture.
-   ------------------------------------------------------------ */
-function washDemo() {
-  const demo = $('#demo'), wash = $('#demoWash'), bar = $('#demoBar');
-  if (!demo || !wash || !bar) return;
-
-  let p = 50, target = 50, down = false, raf = null;
-
-  const paint = () => {
-    p += (target - p) * .18;
-    wash.style.clipPath = `inset(0 0 0 ${p}%)`;
-    bar.style.left = p + '%';
-    if (Math.abs(target - p) > .1) raf = requestAnimationFrame(paint);
-    else { raf = null; p = target; wash.style.clipPath = `inset(0 0 0 ${p}%)`; bar.style.left = p + '%'; }
-  };
-  const to = v => {
-    target = Math.max(2, Math.min(98, v));
-    if (!raf) raf = requestAnimationFrame(paint);
-  };
-  const fromEvent = e => {
-    const r = demo.getBoundingClientRect();
-    to((e.clientX - r.left) / r.width * 100);
-  };
-
-  demo.addEventListener('pointerdown', e => {
-    down = true; demo.classList.add('touched');
-    demo.setPointerCapture(e.pointerId); fromEvent(e);
-  });
-  demo.addEventListener('pointermove', e => {
-    if (down) { fromEvent(e); return; }
-    if (FINE) { demo.classList.add('touched'); fromEvent(e); }   // follow the cursor
-  });
-  const stop = () => { down = false; };
-  demo.addEventListener('pointerup', stop);
-  demo.addEventListener('pointercancel', stop);
-
-  // Nudge it once on first view so people see what it does.
-  if (!REDUCED) {
-    const io = new IntersectionObserver(es => {
-      es.forEach(e => {
-        if (!e.isIntersecting) return;
-        io.disconnect();
-        setTimeout(() => to(74), 420);
-        setTimeout(() => to(28), 1500);
-        setTimeout(() => to(50), 2500);
-      });
-    }, { threshold: .45 });
-    io.observe(demo);
-  }
-}
-
-/* ------------------------------------------------------------
-   History rail — drag to scroll
-   ------------------------------------------------------------ */
-function rail() {
-  const r = $('#rail');
-  if (!r) return;
-  let down = false, sx = 0, sl = 0;
-
-  r.addEventListener('pointerdown', e => {
-    down = true; sx = e.clientX; sl = r.scrollLeft;
-    r.setPointerCapture(e.pointerId); r.style.cursor = 'grabbing';
-  });
-  r.addEventListener('pointermove', e => { if (down) r.scrollLeft = sl - (e.clientX - sx); });
-  const stop = () => { down = false; r.style.cursor = 'grab'; };
-  r.addEventListener('pointerup', stop);
-  r.addEventListener('pointercancel', stop);
-  r.style.cursor = 'grab';
-
-  r.addEventListener('wheel', e => {
-    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-    const atStart = r.scrollLeft <= 0;
-    const atEnd = r.scrollLeft >= r.scrollWidth - r.clientWidth - 1;
-    if ((e.deltaY < 0 && atStart) || (e.deltaY > 0 && atEnd)) return;
+  /* ---------- enquiry: no backend is wired, so hand it to the visitor's mail app ---------- */
+  const form = $('#enquiry');
+  if (form) form.addEventListener('submit', e => {
     e.preventDefault();
-    r.scrollLeft += e.deltaY;
-  }, { passive: false });
-}
-
-/* ------------------------------------------------------------
-   Enquiry form — no backend is wired, so hand it to email
-   rather than pretend it was sent.
-   ------------------------------------------------------------ */
-function form() {
-  const f = $('#enquiry'), note = $('#formNote');
-  if (!f) return;
-
-  f.addEventListener('submit', e => {
-    e.preventDefault();
-    if (!f.reportValidity()) return;
-    const d = new FormData(f);
+    if (!form.reportValidity()) return;
+    const d = new FormData(form);
     const body = [
       `Name: ${d.get('name')}`,
-      `Company: ${d.get('company') || '—'}`,
+      `Company: ${d.get('company') || '-'}`,
       `Email: ${d.get('email')}`,
       `Phone: ${d.get('phone')}`,
       `Interest: ${d.get('interest')}`, '', d.get('message')
     ].join('\n');
-
     location.href = 'mailto:blr@motherlandgroup.com'
-      + '?subject=' + encodeURIComponent(`Enquiry — ${d.get('interest')}`)
+      + '?subject=' + encodeURIComponent(`Enquiry: ${d.get('interest')}`)
       + '&body=' + encodeURIComponent(body);
-
-    note.textContent = 'Opening your mail app with the enquiry ready to send.';
-    note.style.color = 'var(--indigo-lt)';
+    $('#formNote').innerHTML = 'Your mail app should open with the enquiry ready to send. '
+      + 'If it doesn&rsquo;t, write to <a href="mailto:blr@motherlandgroup.com">blr@motherlandgroup.com</a>.';
   });
-}
 
-/* ------------------------------------------------------------ */
-(async function init() {
-  // Never let a slow CDN hold the page hostage.
-  await Promise.race([load(), new Promise(r => setTimeout(r, 2500))]);
+  /* ============================================================
+     SHADERS
+     ============================================================ */
+  const HEAD = `#ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+    #else
+    precision mediump float;
+    #endif
+    `;
 
-  smooth();
-  splitHeads();
-  bootAndHero();
-  reveals();
-  staggerGroups();
-  parallax();
-  marquees();
-  nav();
-  tabs();
-  pointerFX();
-  cursor();
-  magnetic();
-  showcase();
-  washDemo();
-  rail();
-  form();
+  /* Returns null when WebGL is unavailable; the CSS background behind the canvas then stays. */
+  function shader(canvas, frag, names, scale) {
+    const gl = canvas.getContext('webgl', { antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'low-power' });
+    if (!gl) return null;
+    const part = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      return s;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, part(gl.VERTEX_SHADER, 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}'));
+    gl.attachShader(prog, part(gl.FRAGMENT_SHADER, HEAD + frag));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    const u = {};
+    names.forEach(n => { u[n] = gl.getUniformLocation(prog, n); });
+    canvas.addEventListener('webglcontextlost', () => { canvas.style.display = 'none'; });
+    return {
+      gl, u,
+      draw() {
+        const w = Math.max(1, Math.round(canvas.clientWidth * scale));
+        const h = Math.max(1, Math.round(canvas.clientHeight * scale));
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+          gl.viewport(0, 0, w, h);
+          if (u.R) gl.uniform2f(u.R, w, h);
+          if (u.D) gl.uniform1f(u.D, scale);
+        }
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+    };
+  }
+
+  /* ---------- flowing cloth and dye: a few layers of sines bending each other's
+     coordinates. Far cheaper than noise, and it folds like silk. ---------- */
+  const FLOW = `
+    uniform vec2 R, P; uniform float T, K; uniform vec3 A, B, C;
+    void main(){
+      vec2 uv = (gl_FragCoord.xy - .5*R) / R.y;
+      vec2 p = uv * K;
+      float t = T * .16;
+      vec2 d = uv - P;
+      p += d * exp(-dot(d, d) * 7.) * 1.5;
+      for (int i = 0; i < 5; i++) {
+        float f = float(i);
+        p += vec2(sin(p.y*1.25 + t*(1. + f*.13) + f*1.7), cos(p.x*1.1 - t*(.8 + f*.11) + f*2.3)) * .42;
+      }
+      float fold = .5 + .5*sin(p.x*1.15 + p.y*.85 + t*.4);
+      vec3 col = mix(A, B, smoothstep(0., .8, fold));
+      col = mix(col, C, pow(fold, 5.));
+      col += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - .5) / 120.;
+      gl_FragColor = vec4(col, 1.);
+    }`;
+
+  const PALETTES = {
+    silk: { A: [.36, .012, .135], B: [.72, .004, .185], C: [.98, .16, .32], K: 2.7 },
+    cta:  { A: [.33, .018, .14],  B: [.60, .010, .17],  C: [.80, .004, .19], K: 1.5 },
+    dye:  { A: [.035, .055, .16], B: [.065, .10, .28],  C: [.15, .23, .53],  K: 1.7 }
+  };
+
+  $$('[data-flow]').forEach(canvas => {
+    const pal = PALETTES[canvas.dataset.flow];
+    const s = shader(canvas, FLOW, ['R', 'T', 'P', 'K', 'A', 'B', 'C'], PHONE ? 1 : .7);
+    if (!s) return;
+    const { gl, u } = s;
+    gl.uniform3fv(u.A, pal.A);
+    gl.uniform3fv(u.B, pal.B);
+    gl.uniform3fv(u.C, pal.C);
+    gl.uniform1f(u.K, pal.K);
+
+    // the flow parts around the pointer
+    let px = 9, py = 9, tx = 9, ty = 9;
+    if (MOUSE) {
+      const host = canvas.parentElement;
+      host.addEventListener('pointermove', e => {
+        const r = canvas.getBoundingClientRect();
+        tx = (e.clientX - r.left - r.width / 2) / r.height;
+        ty = -(e.clientY - r.top - r.height / 2) / r.height;
+        if (px === 9) { px = tx; py = ty; }
+      }, { passive: true });
+      host.addEventListener('pointerleave', () => { tx = 9; ty = 9; px = 9; py = 9; });
+    }
+    live(canvas, t => {
+      px += (tx - px) * .06;
+      py += (ty - py) * .06;
+      gl.uniform2f(u.P, px, py);
+      gl.uniform1f(u.T, t);
+      s.draw();
+    });
+  });
+
+  /* ---------- denim drawn from its structure: a 3x1 twill of dyed warp over white weft.
+     Washing takes the dye off the warp, the raised ribs and the slubs first, in clouds,
+     which is why it reads as cloth rather than a colour fade. Light slides across it,
+     and the cloth breathes a little. ---------- */
+  const CLOTH = `
+    uniform vec2 R; uniform float X, D, T;
+    float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+    float n(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.-2.*f);
+      return mix(mix(h(i), h(i+vec2(1,0)), f.x), mix(h(i+vec2(0,1)), h(i+vec2(1,1)), f.x), f.y); }
+    float fbm(vec2 p){ return .5*n(p) + .3*n(p*2.1+7.) + .2*n(p*4.3+13.); }
+    void main(){
+      vec2 px = gl_FragCoord.xy / D;
+      float u = gl_FragCoord.x / R.x;
+      vec2 sag = vec2(sin(px.y*.011 + T*.5), cos(px.x*.009 - T*.4)) * 3.;
+
+      float rib  = .5 + .5*sin(((px.x+sag.x)*.89 - (px.y+sag.y)*.454) * 1.2);
+      float warp = .5 + .5*sin((px.x+sag.x) * 2.1);
+      float slub = n(vec2(px.x*.5, px.y*.016));
+      float fine = n(px*.8);
+      float cloud = fbm(px*.008);
+      float marble = fbm(px*.055);
+      vec2 q = vec2(px.x*.96 + px.y*.28, px.y*.96 - px.x*.28);
+      float crease = n(vec2(q.x*.004, q.y*.035));
+
+      float w = smoothstep(X-.26, X+.26, u + (cloud-.5)*.16);
+      float local = .74 + .55*(cloud-.5) + .6*(marble-.5) + .3*(crease-.5);
+      float threadv = (rib-.5)*.3 + (slub-.5)*.3 + (warp-.5)*.1;
+      float take = clamp(w*(local + threadv), 0., 1.);
+
+      vec3 raw  = vec3(.040, .070, .205);
+      vec3 mid  = vec3(.165, .265, .530);
+      vec3 pale = vec3(.650, .745, .880);
+      vec3 dye  = mix(mix(raw, mid, smoothstep(0., .55, take)), pale, smoothstep(.45, 1., take));
+      dye *= .80 + .40*rib;
+      dye *= .95 + .10*slub;
+
+      float fleck = smoothstep(.55, .95, (1.-rib)*warp + fine*.25);
+      vec3 col = mix(dye, vec3(.93, .95, .985), fleck*(.07 + .34*take));
+      col += (fine-.5)*.03;
+
+      float light = sin(px.x*.0065 + px.y*.0045 - T*.42);
+      col *= 1. + .13*smoothstep(.2, 1., light);
+      gl_FragColor = vec4(col, 1.);
+    }`;
+
+  $$('.swatch').forEach(swatch => {
+    const input = $('input', swatch), canvas = $('canvas', swatch);
+    const s = shader(canvas, CLOTH, ['R', 'X', 'D', 'T'], Math.min(devicePixelRatio || 1, PHONE ? 1.5 : 2));
+    let x = 50, touched = false, down = false, t0 = null, now = 0;
+
+    const paint = () => {
+      swatch.style.setProperty('--x', x);
+      input.value = Math.round(x);
+      if (!s) return;
+      s.gl.uniform1f(s.u.X, x / 100);
+      s.gl.uniform1f(s.u.T, now);
+      s.draw();
+    };
+    const fromEvent = e => {
+      const r = swatch.getBoundingClientRect();
+      touched = true;
+      x = Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100));
+      paint();
+    };
+    swatch.addEventListener('pointerdown', e => { down = true; swatch.setPointerCapture(e.pointerId); fromEvent(e); });
+    swatch.addEventListener('pointermove', e => { if (down || e.pointerType === 'mouse') fromEvent(e); });
+    swatch.addEventListener('pointerup', () => { down = false; });
+    swatch.addEventListener('pointercancel', () => { down = false; });
+    input.addEventListener('focus', () => { touched = true; });
+    input.addEventListener('input', () => { touched = true; x = +input.value; paint(); });
+
+    // Left alone, it shows what it does in one wide sweep, then keeps breathing.
+    let started = false;
+    live(swatch, t => {
+      now = t;
+      if (!touched && started) {
+        if (t0 === null) t0 = t;
+        const a = t - t0;
+        x = 50 + Math.sin(a * .9) * (11 + 22 * Math.exp(-a * .22));
+      }
+      started = true;
+      paint();
+    });
+    if (s) new ResizeObserver(paint).observe(swatch);
+  });
+
+  /* ============================================================
+     THE LINE: garments on an overhead rail, the way a finishing floor
+     moves them. On the wash line their colour is tied to where they are
+     on screen, so each one fades from raw to bleached as it passes the
+     spray bar. On the rack variant they simply keep their own colours.
+     ============================================================ */
+  const GARMENTS = {
+    jeans: {
+      h: 178,
+      body: 'M-30 22H30L33 40Q38 70 40 178H14L3 84Q0 78-3 84L-14 178H-40Q-38 70-33 40Z',
+      lines: 'M-31 32H31M0 32V80M-32 44Q-20 44-14 33M32 44Q20 44 14 33M-39.6 170H-14.6M39.6 170H14.6M-22 22v10M22 22v10M-8 22v10M8 22v10',
+      stitch: 'M5 33Q7 58 1 74M-31 47Q-18 47-11 33M31 47Q18 47 11 33M-39.8 173H-14.4M39.8 173H14.4M-30 24.5H30',
+      dots: [[-13.5, 34], [13.5, 34], [0, 27]],
+      hanger: 'M0 3V19M-27 20H27'
+    },
+    jacket: {
+      h: 126,
+      body: 'M-12 16C-6 24 6 24 12 16L40 26Q48 30 50 40L60 118L46 122L36 66V126H-36V66L-46 122L-60 118L-50 40Q-48 30-40 26Z',
+      lines: 'M-12 16L-20 31L-2 35L0 27L2 35L20 31L12 16M0 35V126M-36 52H36M-36 114H36M-36 66L-40 34M36 66L40 34M-47.5 114L-60 111M47.5 114L60 111M-28 60h17v14l-8.5 4-8.5-4zM11 60h17v14l-8.5 4-8.5-4z',
+      stitch: 'M-36 55H36M-4 36V114M4 36V114M-36 111H36',
+      dots: [[0, 44], [0, 62], [0, 80], [0, 98], [-19.5, 66], [19.5, 66]],
+      hanger: 'M0 3V13M-40 28L0 13L40 28'
+    },
+    shirt: {
+      h: 138,
+      body: 'M-10 16C-5 22 5 22 10 16L36 24Q44 28 46 38L54 112L42 114L33 62L34 132Q0 140-34 132L-33 62L-42 114L-54 112L-46 38Q-44 28-36 24Z',
+      lines: 'M-10 16L-15 28L-1 31L0 24L1 31L15 28L10 16M-3 31V136M3 31V136M-33 62L-37 32M33 62L37 32M9 50h16v16l-8 4-8-4z',
+      stitch: 'M-42.5 108L-54 106M42.5 108L54 106M-33 128Q0 136 33 128',
+      dots: [[0, 42], [0, 60], [0, 78], [0, 96], [0, 114]],
+      hanger: 'M0 3V13M-36 26L0 13L36 26'
+    },
+    tee: {
+      h: 118,
+      body: 'M-11 16Q0 28 11 16L34 22L54 46L40 58L30 46L31 118H-31L-30 46L-40 58L-54 46L-34 22Z',
+      lines: 'M-14 18Q0 34 14 18M-30 46L-34 22M30 46L34 22',
+      stitch: 'M-31 112H31M-50 49L-37 60M50 49L37 60',
+      dots: [],
+      hanger: 'M0 3V13M-32 24L0 13L32 24'
+    }
+  };
+  Object.values(GARMENTS).forEach(g => {
+    ['body', 'lines', 'stitch', 'hanger'].forEach(k => { g[k] = new Path2D(g[k]); });
+  });
+
+  const WASH_ORDER = ['jeans', 'jacket', 'jeans', 'shirt', 'jeans', 'tee', 'jeans', 'jacket'];
+  const RACK_ORDER = ['shirt', 'jeans', 'tee', 'jacket', 'jeans', 'shirt', 'tee', 'jeans'];
+  const RACK_COLOURS = ['#2E3F9E', '#10173A', '#DA0133', '#5C73C8', '#2B3355', '#82073A', '#C9893B', '#3F54B8'];
+  const rand = i => { const v = Math.sin(i * 12.9898) * 43758.5453; return v - Math.floor(v); };
+
+  $$('[data-line]').forEach(canvas => {
+    const ctx = canvas.getContext('2d');
+    const rack = canvas.dataset.line === 'rack';
+    const order = rack ? RACK_ORDER : WASH_ORDER;
+    let W = 0, H = 0, s = 1, railY = 0, gap = 0, span = 0, margin = 0, count = 0, curtain = null;
+
+    const fit = () => {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      W = canvas.clientWidth;
+      H = canvas.clientHeight;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      railY = Math.round(H * .1);
+      s = (H - railY - 10) / 178;
+      gap = 138 * s;
+      margin = 80 * s;
+      count = Math.ceil((W + margin * 2) / gap) + 1;
+      span = count * gap;
+      curtain = ctx.createLinearGradient(W * .36, 0, W * .64, 0);
+      curtain.addColorStop(0, 'rgba(92,115,200,0)');
+      curtain.addColorStop(.5, 'rgba(92,115,200,.1)');
+      curtain.addColorStop(1, 'rgba(92,115,200,0)');
+    };
+
+    const garment = (i, x, t) => {
+      const g = GARMENTS[order[i % order.length]];
+      const u = x / W;
+      const inWash = rack ? 0 : Math.exp(-Math.pow((u - .5) / .13, 2));
+      const sway = Math.sin(t * 1.25 + i * 1.9) * .022 + Math.sin(t * 5.3 + i) * .04 * inWash;
+
+      ctx.save();
+      ctx.translate(x, railY);
+
+      // the trolley riding the rail stays on the rail; only the garment swings
+      ctx.fillStyle = '#10173A';
+      ctx.beginPath();
+      ctx.arc(0, 0, 3.4 * s, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.rotate(sway);
+      ctx.scale(s, s);
+
+      ctx.strokeStyle = '#5F6888';
+      ctx.lineWidth = 1.6;
+      ctx.stroke(g.hanger);
+
+      ctx.save();
+      ctx.translate(3, 5);
+      ctx.fillStyle = 'rgba(16,23,58,.07)';
+      ctx.fill(g.body);
+      ctx.restore();
+
+      if (rack) {
+        ctx.fillStyle = RACK_COLOURS[i % RACK_COLOURS.length];
+      } else {
+        // gradient coordinates are local, so offset them to stay fixed to the screen
+        const fade = ctx.createLinearGradient(-x / s, 0, (W - x) / s, 0);
+        fade.addColorStop(.34, '#10173A');
+        fade.addColorStop(.48, '#2E3F9E');
+        fade.addColorStop(.62, '#6B83D2');
+        fade.addColorStop(.8, '#A9BCE6');
+        ctx.fillStyle = fade;
+      }
+      ctx.fill(g.body);
+
+      ctx.lineWidth = .8;
+      ctx.strokeStyle = rack || u < .56 ? 'rgba(255,255,255,.26)' : 'rgba(16,23,58,.24)';
+      ctx.stroke(g.lines);
+
+      ctx.setLineDash([2.6, 2.2]);
+      ctx.strokeStyle = '#D9A15C';
+      ctx.stroke(g.stitch);
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = '#E3B071';
+      g.dots.forEach(d => {
+        ctx.beginPath();
+        ctx.arc(d[0], d[1], 1.25, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+    };
+
+    const spray = t => {
+      const c = W / 2, half = W * .1;
+      ctx.fillStyle = curtain;
+      ctx.fillRect(W * .36, railY, W * .28, H - railY);
+
+      // the spray bar, with water falling from it
+      ctx.fillStyle = '#10173A';
+      ctx.fillRect(c - half, railY + 6 * s, half * 2, 4 * s);
+
+      ctx.lineCap = 'round';
+      ctx.lineWidth = 1.3;
+      const drops = PHONE ? 26 : 54;
+      for (let i = 0; i < drops; i++) {
+        const y = (rand(i) + t * (.34 + rand(i + 50) * .3)) % 1;
+        const dx = c - half + rand(i + 99) * half * 2;
+        const dy = railY + 12 * s + y * (H - railY - 12 * s);
+        ctx.strokeStyle = `rgba(62,88,190,${(.5 * (1 - y)).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.moveTo(dx, dy);
+        ctx.lineTo(dx, dy + 7 + rand(i + 7) * 7);
+        ctx.stroke();
+      }
+
+      // suds rising off the floor
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 16; i++) {
+        const y = (rand(i + 200) + t * (.05 + rand(i + 300) * .07)) % 1;
+        const bx = c - half * 1.5 + rand(i + 400) * half * 3 + Math.sin(t * 1.4 + i) * 6;
+        const by = H - y * H * .5;
+        ctx.strokeStyle = `rgba(62,88,190,${(.42 * (1 - y)).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(bx, by, 1.6 + rand(i + 500) * 3.4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    };
+
+    let off = 0, prev = null, lastY = scrollY, boost = 0;
+    const speed = rack ? 22 : 34;
+    const frame = t => {
+      if (!W) fit();
+      const dt = prev === null ? 0 : Math.min(t - prev, .1);
+      prev = t;
+      // scrolling leans on the line a little
+      boost += (Math.min(Math.abs(scrollY - lastY), 120) * 1.5 - boost) * .08;
+      lastY = scrollY;
+      off += (speed + boost) * s * dt;
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#10173A';
+      ctx.fillRect(0, railY - 1, W, 2);
+      for (let i = 0; i < count; i++) {
+        garment(i, ((i * gap + off) % span) - margin, t);
+      }
+      if (!rack) spray(t);
+    };
+    new ResizeObserver(() => { fit(); frame(performance.now() / 1000); }).observe(canvas);
+    fit();
+    live(canvas, frame);
+  });
 })();
